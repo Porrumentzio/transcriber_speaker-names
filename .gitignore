@@ -1,2 +1,5 @@
 # TRS files
 *.trs
+
+# lock files
+*.csv#
