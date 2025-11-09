@@ -1,2 +1,2 @@
 # transcriber_speaker-names
-Edits the value of the key _name_ on <Speaker/> according to a CSV mapping, an also adds missing _accent_.
+Edits the value of _name_ and adds missing _accent_ value on <Speaker/> according to a CSV mapping.
