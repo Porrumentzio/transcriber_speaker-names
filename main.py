@@ -12,28 +12,22 @@ def argument_parsers():
 def get_name(name_file):
     base, ext = os.path.splitext(name_file)
     new_file = base + "_zuzenduta" + ext
+    print(f"Modified file will be saved as: {new_file}")
     return new_file
 
 def load_name_accent_mapping(csv_path):
     df = pd.read_csv(csv_path, delimiter=";")
-    map_by_name = {}
-    map_by_correct = {}
-
+    mapping = {}
     for idx, row in df.iterrows():
         name_upper = str(row['name']).strip().upper()
         correct_name = str(row['correct name']).strip()
-        correct_name_upper = correct_name.upper()
-
         accent_value = row.get('accent', '')
         if pd.isna(accent_value):
             accent_value = ''
         else:
             accent_value = str(accent_value).strip()
-
-        map_by_name[name_upper] = (correct_name, accent_value)
-        map_by_correct[correct_name_upper] = (correct_name, accent_value)
-
-    return map_by_name, map_by_correct
+        mapping[name_upper] = (correct_name, accent_value)
+    return mapping
 
 def write_xml_with_formatting(tree, file_path):
     declaration = '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -64,16 +58,16 @@ def insert_doctype(xml_file, doctype_line):
     lines.insert(insert_index, doctype_line + "\n")
     with open(xml_file, "w", encoding="utf-8") as f:
         f.writelines(lines)
+    print(f"DOCTYPE line inserted: {doctype_line}")
 
 def update_speaker_attributes(xml_path, csv_path):
     tree = ET.parse(xml_path)
     root = tree.getroot()
-    map_by_name, map_by_correct = load_name_accent_mapping(csv_path)
+    mapping = load_name_accent_mapping(csv_path)
+    correct_names_upper = {v[0].upper(): v[0] for v in mapping.values()}
 
-    changed_attributes = {
-        "name": [],
-        "accent": []
-    }
+    changed_names = []
+    changed_accents = []
 
     speakers_block = root.find(".//Speakers")
     if speakers_block is None:
@@ -87,25 +81,34 @@ def update_speaker_attributes(xml_path, csv_path):
 
         orig_name_upper = orig_name.strip().upper()
 
-        mapping = None
-        if orig_name_upper in map_by_name:
-            mapping = map_by_name[orig_name_upper]
-        elif orig_name_upper in map_by_correct:
-            mapping = map_by_correct[orig_name_upper]
-
-        if mapping:
-            new_name, new_accent = mapping
-
+        if orig_name_upper in mapping:
+            new_name, new_accent = mapping[orig_name_upper]
+            # Case 1: name matches CSV 'name' (key), replace by exact correct_name from CSV
             if orig_name != new_name:
                 speaker.set("name", new_name)
-                changed_attributes["name"].append(f"'{orig_name}' -> '{new_name}'")
-
+                changed_names.append(f"'{orig_name}' -> '{new_name}'")
+            # Accent update if empty and accent exists in CSV
             accent_cur = speaker.get("accent", "").strip()
             if not accent_cur and new_accent:
                 speaker.set("accent", new_accent)
-                changed_attributes["accent"].append(f"'{new_name}' accent set to '{new_accent}'")
+                changed_accents.append(f"'{new_name}' accent set to '{new_accent}'")
 
-    total_changes = len(changed_attributes["name"]) + len(changed_attributes["accent"])
+        elif orig_name_upper in correct_names_upper:
+            # Case 2: name matches a 'correct_name' in CSV ignoring case but with different capitalization
+            corrected_norm = correct_names_upper[orig_name_upper]
+            if orig_name != corrected_norm.upper():
+                speaker.set("name", corrected_norm.upper())
+                changed_names.append(f"'{orig_name}' (just uppercase) -> '{corrected_norm.upper()}'")
+            # Accent update if empty (optional: find accent for this correct_name)
+            accent_cur = speaker.get("accent", "").strip()
+            # Find accent by searching mapping values for correct_name match ignoring case
+            matched_entry = next((v for v in mapping.values() if v[0].upper() == orig_name_upper), None)
+            if matched_entry:
+                new_accent = matched_entry[1]
+                if not accent_cur and new_accent:
+                    speaker.set("accent", new_accent)
+                    changed_accents.append(f"'{corrected_norm.upper()}' accent set to '{new_accent}'")
+
     new_file = get_name(xml_path)
     write_xml_with_formatting(tree, new_file)
 
@@ -113,17 +116,24 @@ def update_speaker_attributes(xml_path, csv_path):
     if doctype_line:
         insert_doctype(new_file, doctype_line)
 
-    # Print grouped logs by attribute category
-    for attr, changes_list in changed_attributes.items():
-        if changes_list:
-            print(f"\nChanged {attr}s:")
-            for entry in changes_list:
-                print(f"    {entry}")
-        else:
-            print(f"\nNo {attr}s changed.")
+    # Grouped logs
+    if changed_names:
+        print("\nChanged names:")
+        for entry in changed_names:
+            print(f"    {entry}")
+    else:
+        print("\nNo names changed.")
 
-    print(f"\nTotal 'name' attributes modified: {len(changed_attributes['name'])}")
-    print(f"Total 'accent' attributes modified: {len(changed_attributes['accent'])}")
+    if changed_accents:
+        print("\nChanged accents:")
+        for entry in changed_accents:
+            print(f"    {entry}")
+    else:
+        print("\nNo accents changed.")
+
+    print(
+        f"\nTotal 'name' attributes modified: {len(changed_names)}\nTotal 'accent' attributes modified: {len(changed_accents)}"
+    )
 
 def main():
     args = argument_parsers()
